@@ -17,9 +17,13 @@ Flags:
 
 ```
 
+## Build
+
+```bash
+$ go build -o ./bin/gdrive ./cmd/gdrive
+```
+
 ## For example
 ```bash
-
 $ gdrive download --src 'google-drive-folder-or-file-id' --dst 'local-folder-path'
-
 ```

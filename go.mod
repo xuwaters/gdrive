@@ -1,4 +1,4 @@
-module gdrive
+module github.com/xuwaters/gdrive
 
 go 1.13
 

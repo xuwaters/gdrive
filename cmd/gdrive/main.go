@@ -7,18 +7,18 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gdrive/pkg/download"
+	"github.com/xuwaters/gdrive/pkg/download"
 )
 
 func main() {
-	rootCmd := getCmd()
+	rootCmd := GetCmd()
 	err := rootCmd.Execute()
 	if err != nil {
 		log.Printf("cmd error = %v", err)
 	}
 }
 
-func getCmd() *cobra.Command {
+func GetCmd() *cobra.Command {
 	appName := filepath.Base(os.Args[0])
 	cmd := &cobra.Command{
 		Use: appName,

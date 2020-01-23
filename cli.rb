@@ -8,7 +8,7 @@ class CLI < Thor
   desc "build", "build gdrive"
   def build
     run <<~CMD.strip
-      go build -o bin/gdrive gdrive/cmd/gdrive
+      go build -o bin/gdrive ./cmd/gdrive
     CMD
   end
 end
