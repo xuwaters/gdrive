@@ -29,6 +29,7 @@ type downloadConfig struct {
 	TokenFile string `mapstructure:"token_file"`
 	Src       string `mapstructure:"src"`
 	Dst       string `mapstructure:"dst"`
+	ListFile  string `mapstructure:"list_file"` // save file list meta
 }
 
 func loadConfig() (*downloadConfig, error) {
@@ -62,10 +63,11 @@ func GetCmd() *cobra.Command {
 	}
 
 	flags := cmd.Flags()
-	flags.String("cred-file", "", "credentials.json file for Google Drive API from gcloud console \nhttps://console.developers.google.com/apis/library/drive.googleapis.com")
+	flags.String("cred_file", "", "credentials.json file for Google Drive API from gcloud console \nhttps://console.developers.google.com/apis/library/drive.googleapis.com")
 	flags.String("src", "", "Source fileId in google drive")
 	flags.String("dst", "", "Destination directory")
-	flags.String("token-file", "", "token file that stores access and refresh tokens, and is created automatically")
+	flags.String("token_file", "", "token file that stores access and refresh tokens, and is created automatically")
+	flags.String("list_file", "", "list of files to be downloaded, will be created automatically")
 
 	_ = cmd.MarkFlagRequired("src")
 	_ = cmd.MarkFlagRequired("dst")
@@ -89,8 +91,9 @@ func GetCmd() *cobra.Command {
 }
 
 type Task struct {
-	FileId   string
-	SavePath string
+	FileId      string `json:"id"`
+	SavePath    string `json:"path"`
+	Md5Checksum string `json:"md5"`
 }
 
 func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
@@ -113,13 +116,74 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 		return
 	}
 
-	// queue of fileId or folderId
-	taskQueue := list.New()
-	taskQueue.PushBack(Task{
+	root := Task{
 		FileId:   config.Src,
 		SavePath: config.Dst,
-	})
+	}
 
+	var fileTasks []Task
+
+	fileTasks, err = loadListFile(config.ListFile)
+	if err != nil {
+		log.Printf("Load list file err = %v", err)
+		fileTasks, err = listDriveFolderFiles(service, root)
+		if err != nil {
+			log.Printf("list files: err = %v", err)
+			return
+		}
+		// save lists
+		_ = saveListFile(fileTasks, config.ListFile)
+	}
+
+	total := len(fileTasks)
+	log.Printf("Total files: %d", total)
+
+	for i, task := range fileTasks {
+		log.Printf("Downloading: %05d / %05d", i, total)
+		err := downloadDriveFile(service, task)
+		if err != nil {
+			log.Printf("download err = %v", err)
+			return
+		}
+	}
+}
+
+func loadListFile(listFile string) ([]Task, error) {
+	fin, err := os.Open(listFile)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to open list file: %s, err = %w", listFile, err)
+	}
+	defer fin.Close()
+	var tasks []Task
+	decoder := json.NewDecoder(fin)
+	err = decoder.Decode(tasks)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to decode list file: %s, err = %w", listFile, err)
+	}
+	return tasks, nil
+}
+
+func saveListFile(fileTasks []Task, listFile string) error {
+	fout, err := os.Create(listFile)
+	if err != nil {
+		return fmt.Errorf("Unable create list file: %s, err = %w", listFile, err)
+	}
+	defer fout.Close()
+
+	encoder := json.NewEncoder(fout)
+	encoder.SetIndent("", "  ")
+	err = encoder.Encode(fileTasks)
+	if err != nil {
+		return fmt.Errorf("Marshal tasks err = %w", err)
+	}
+
+	return nil
+}
+
+func listDriveFolderFiles(service *drive.Service, rootFolder Task) ([]Task, error) {
+	fileTasks := []Task{}
+	taskQueue := list.New()
+	taskQueue.PushBack(rootFolder)
 	for taskQueue.Len() != 0 {
 		frontElem := taskQueue.Front()
 		taskQueue.Remove(frontElem)
@@ -128,37 +192,39 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 		driveFile := service.Files.Get(task.FileId)
 		currFile, err := driveFile.Fields("id,name,mimeType,md5Checksum").Do()
 		if err != nil {
-			log.Printf("get fileId: %s, err = %v", task.FileId, err)
-			return
+			return nil, fmt.Errorf("get fileId: %s, err = %v", task.FileId, err)
 		}
 		if isDriveFolder(currFile) {
 			// list folder contents
 			log.Printf(">> list folder: %s [%s]", currFile.Id, currFile.Name)
 			err = listDriveFolder(service, currFile.Id, func(nextFile *drive.File) error {
 				dstFilePath := filepath.Join(task.SavePath, nextFile.Name)
-				if isDriveFolder(nextFile) {
-					taskQueue.PushBack(Task{
-						FileId:   nextFile.Id,
-						SavePath: dstFilePath,
-					})
-					return nil
+				nextTask := Task{
+					FileId:      nextFile.Id,
+					SavePath:    dstFilePath,
+					Md5Checksum: nextFile.Md5Checksum,
 				}
-				return downloadDriveFile(service, nextFile, dstFilePath)
+				if isDriveFolder(nextFile) {
+					taskQueue.PushBack(nextTask)
+				} else {
+					fileTasks = append(fileTasks, nextTask)
+				}
+				return nil
 			})
 			if err != nil {
-				log.Printf("list drive folder: %s [%s], err = %v", currFile.Id, currFile.Name, err)
-				return
+				return nil, fmt.Errorf("list drive folder: %s [%s], err = %w", currFile.Id, currFile.Name, err)
 			}
 		} else {
 			// download file
 			dstFilePath := filepath.Join(task.SavePath, currFile.Name)
-			err = downloadDriveFile(service, currFile, dstFilePath)
-			if err != nil {
-				log.Printf("download drive file err = %v", err)
-				return
-			}
+			fileTasks = append(fileTasks, Task{
+				FileId:      currFile.Id,
+				SavePath:    dstFilePath,
+				Md5Checksum: currFile.Md5Checksum,
+			})
 		}
 	}
+	return fileTasks, nil
 }
 
 func listDriveFolder(service *drive.Service, folderId string, handler func(*drive.File) error) error {
@@ -166,7 +232,7 @@ func listDriveFolder(service *drive.Service, folderId string, handler func(*driv
 	for i := 0; ; i++ {
 		log.Printf("[%03d] listing folder: %s", i, folderId)
 		resp, err := service.Files.List().
-			PageSize(10).
+			PageSize(100).
 			PageToken(pageToken).
 			Spaces("drive").
 			Corpora("user").
@@ -185,24 +251,26 @@ func listDriveFolder(service *drive.Service, folderId string, handler func(*driv
 				return err
 			}
 		}
-		log.Printf("[%03d] nextPageToken = %s", i, resp.NextPageToken)
 		pageToken = resp.NextPageToken
 		if pageToken == "" {
+			log.Printf("[%03d] finished", i)
 			break
 		}
+		log.Printf("[%03d] nextPageToken = %s", i, resp.NextPageToken)
 	}
 	return nil
 }
 
-func downloadDriveFile(service *drive.Service, currFile *drive.File, dstFilePath string) error {
-	driveFile := service.Files.Get(currFile.Id)
+func downloadDriveFile(service *drive.Service, task Task) error {
+	driveFile := service.Files.Get(task.FileId)
 	// check md5
+	dstFilePath := task.SavePath
 	dstFileMd5 := getFileMd5(dstFilePath)
-	if dstFileMd5 != "" && dstFileMd5 == currFile.Md5Checksum {
+	if task.Md5Checksum != "" && dstFileMd5 != "" && dstFileMd5 == task.Md5Checksum {
 		log.Printf("skipping identical file: %s", dstFilePath)
 		return nil
 	}
-	log.Printf("downloading file: %s", dstFilePath)
+	log.Printf("downloading file (%s): %s", task.Md5Checksum, dstFilePath)
 	resp, err := driveFile.Download()
 	if err != nil {
 		return fmt.Errorf("download file: %s, err = %w", dstFilePath, err)
@@ -248,7 +316,7 @@ func saveFile(dstFilePath string, reader io.ReadCloser) error {
 	}
 	defer fout.Close()
 
-	writer := bufio.NewWriterSize(fout, 1024 * 1024)
+	writer := bufio.NewWriterSize(fout, 1024*1024)
 	defer writer.Flush()
 
 	_, err = io.Copy(writer, reader)
