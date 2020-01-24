@@ -144,13 +144,14 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 			log.Printf("Skipping: %05d / %05d, file: %s", i, total, task.SavePath)
 			continue
 		}
-		log.Printf("Downloading: %05d / %05d", i, total)
+		percent := float64(i) * 100.0 / float64(total)
+		log.Printf("Downloading: %05d / %05d (%.2f %%)", i, total, percent)
 		for k := 1; k <= 5; k++ {
 			err = downloadDriveFile(service, task)
 			if err == nil {
 				break
 			}
-			sleepDuration := time.Duration(k * 5) * time.Second
+			sleepDuration := time.Duration(k*5) * time.Second
 			log.Printf("retry [%02d] in %v, err = %v", k, sleepDuration, err)
 			time.Sleep(sleepDuration)
 		}
@@ -159,6 +160,11 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 			break
 		}
 		fileTasks[i].Done = true
+
+		// save list file periodically
+		if (i+1)%10 == 0 {
+			_ = saveListFile(fileTasks, config.ListFile)
+		}
 	}
 
 	// save list file
