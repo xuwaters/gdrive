@@ -145,7 +145,15 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 			continue
 		}
 		log.Printf("Downloading: %05d / %05d", i, total)
-		err := downloadDriveFile(service, task)
+		for k := 1; k <= 5; k++ {
+			err = downloadDriveFile(service, task)
+			if err == nil {
+				break
+			}
+			sleepDuration := time.Duration(k * 5) * time.Second
+			log.Printf("retry [%02d] in %v, err = %v", k, sleepDuration, err)
+			time.Sleep(sleepDuration)
+		}
 		if err != nil {
 			log.Printf("download err = %v", err)
 			break
