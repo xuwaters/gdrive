@@ -94,6 +94,7 @@ type Task struct {
 	FileId      string `json:"id"`
 	SavePath    string `json:"path"`
 	Md5Checksum string `json:"md5"`
+	Done        bool   `json:"done"`
 }
 
 func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
@@ -139,13 +140,21 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 	log.Printf("Total files: %d", total)
 
 	for i, task := range fileTasks {
+		if task.Done {
+			log.Printf("Skipping: %05d / %05d, file: %s", i, total, task.SavePath)
+			continue
+		}
 		log.Printf("Downloading: %05d / %05d", i, total)
 		err := downloadDriveFile(service, task)
 		if err != nil {
 			log.Printf("download err = %v", err)
-			return
+			break
 		}
+		fileTasks[i].Done = true
 	}
+
+	// save list file
+	_ = saveListFile(fileTasks, config.ListFile)
 }
 
 func loadListFile(listFile string) ([]Task, error) {
