@@ -156,7 +156,7 @@ func loadListFile(listFile string) ([]Task, error) {
 	defer fin.Close()
 	var tasks []Task
 	decoder := json.NewDecoder(fin)
-	err = decoder.Decode(tasks)
+	err = decoder.Decode(&tasks)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to decode list file: %s, err = %w", listFile, err)
 	}
