@@ -140,12 +140,13 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 	log.Printf("Total files: %d", total)
 
 	for i, task := range fileTasks {
+		idx := i + 1
 		if task.Done {
-			log.Printf("Skipping: %05d / %05d, file: %s", i, total, task.SavePath)
+			log.Printf("Skipping: %05d / %05d, file: %s", idx, total, task.SavePath)
 			continue
 		}
-		percent := float64(i) * 100.0 / float64(total)
-		log.Printf("Downloading: %05d / %05d (%.2f %%)", i, total, percent)
+		percent := float64(idx) * 100.0 / float64(total)
+		log.Printf("Downloading: %05d / %05d (%.2f %%)", idx, total, percent)
 		for k := 1; k <= 5; k++ {
 			err = downloadDriveFile(service, task)
 			if err == nil {
@@ -162,7 +163,7 @@ func onRunDownload(cmd *cobra.Command, args []string, config *downloadConfig) {
 		fileTasks[i].Done = true
 
 		// save list file periodically
-		if (i+1)%10 == 0 {
+		if idx%10 == 0 {
 			_ = saveListFile(fileTasks, config.ListFile)
 		}
 	}
